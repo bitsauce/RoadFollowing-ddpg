@@ -16,7 +16,7 @@ from ddpg import DDPG
 from RoadFollowingEnv.car_racing import RoadFollowingEnv
 from utils import (FrameStack, ReplayBuffer, VideoRecorder, do_random_exploration,
                    preprocess_frame)
-from per import PrioritizedReplayBuffer
+from replay_buffers import PrioritizedReplayBuffer
 from stable_baselines.ddpg.noise import OrnsteinUhlenbeckActionNoise
 
 def reward1(state):

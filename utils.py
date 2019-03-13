@@ -38,53 +38,6 @@ class VideoRecorder():
     def __del__(self):
         self.release()
 
-class ReplayBuffer():
-    def __init__(self, state_shapes, num_actions, size=1000000):
-        self.states      = [np.zeros((size, *shape), dtype=np.float32) for shape in state_shapes] # s
-        self.states_next = [np.zeros((size, *shape), dtype=np.float32) for shape in state_shapes] # s'
-        self.taken_action = np.zeros((size, num_actions), dtype=np.float32)                       # a
-        self.rewards      = np.zeros((size,), dtype=np.float32)                                 # r
-        self.terminals    = np.zeros((size,), dtype=np.float32)                                 # d
-        self.size, self.idx = size, 0
-    
-    def __len__(self):
-        return min(self.idx, self.size)
-
-    def __getitem__(self, key):
-        if isinstance(key, slice):
-            if key.stop == None:
-                key.stop = len(self)
-            elif key.stop < 0:
-                key.stop = len(self) + key.stop
-        elif isinstance(key, int):
-            if key < 0:
-                key = len(self) + key
-        states = []
-        for j in range(len(self.states)):
-            states.append(self.states[j][key])
-        states_next = []
-        for j in range(len(self.states_next)):
-            states_next.append(self.states_next[j][key])
-        return states, self.taken_action[key], self.rewards[key], states_next, self.terminals[key]
-
-    def sample(self, batch_size):
-        mb_idx = np.random.choice(len(self), batch_size, replace=True)
-        return self[mb_idx]
-
-    def add(self, state, taken_action, reward, state_next, terminal):
-        i = self.idx % self.size
-        assert len(state) == len(self.states), f"{len(state)} == {len(self.states)}"
-        for j in range(len(self.states)):
-            self.states[j][i] = state[j]
-        assert len(state_next) == len(self.states_next)
-        for j in range(len(self.states_next)):
-            self.states_next[j][i] = state_next[j]
-        self.taken_action[i] = taken_action
-        self.rewards[i] = reward
-        self.terminals[i] = terminal
-        self.idx += 1
-
-
 def build_mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
     for h in hidden_sizes[:-1]:
         x = tf.layers.dense(x, units=h, activation=activation)
