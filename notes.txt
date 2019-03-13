@@ -1,0 +1,57 @@
+Goal: Train agent in ~15 minutes
+
+Experiment 1:
+Try to train the agent using a variational autoencoder
+o How to train?
+    - Training the autoencoder along-side the policy yielded results similar to just training the policy by itself
+    - Training them in alternate phases was unsucecssfull. Perhaps the effect of having a "moving goal post" so to speak?
+    - Pretraining the autoencoder seems most stable. [TODO]: Is it better than having no autoencoder?
+o Architecture:
+    - I tried a 3x2-layer MLP for the encoder/decoder and the CNN from the learning to drive in a day paper.
+      Results? They had equal reconstruction loss, however, the MLP was faster to train.
+      Although I suspect that the CNN might work better for input of higher dimentionality, and
+      input that are real-life images.
+    - MSE vs BCE: Turns out MSE has a lot lower reconstruction loss, however, the reconstructions themselves
+      are of lower quality. Because of this I decided to stick to BCE for now.
+      [TODO]: Try to use the MSE model with PPO
+    - I tried several values of beta. It seems that it is able to enforce that the learned representations
+      encode more relevant features, however, these representations arent very clear.
+      I decided to stick to a value of beta=4 for now. [TODO]: Try beta=1
+
+Experiment 2:
+Try single environment
+o I was able to train an agent using the PPO-VAE implementation with a single environment.
+  However, I have not tested whether the VAE is actually necessary for this to work
+
+Experiment 3:
+Different reward formulations
+o In this experiment, I want ot see if the reward formulation has a big impact on training time:
+    - Reward formulation 1: The default CarRacing-v0 reward
+        i.   -0.1 per step
+        ii.  +1000/trackLenght for each visited tile
+    - Reward formulation 2: The Kendall formulation
+        i.   Reward = speed
+        ii.  End episode upon infraction (e.g. driving of the road)
+o Results:
+    - Changing the environment such that driving of the road resets the episode VASTLY improves training time
+    - reward1 vs reward2: reward2 seems sligthly better, although further investigation is needed [TODO]
+
+[TDOD] Experiment 4:
+Hyperparameter search
+o Find the best hyperparameters
+
+[TODO] Experiment 5:
+Prioritized experience replay
+o Make samples that had a higher value error more likely to be trained on (slightly different from TD-error)
+
+[TODO] Experiment 6:
+Try entropy-regularized RL
+o Basically: add entropy term to reward to encourage high-entropy actions (see medium article for more info)
+
+[TODO] Experiment 7:
+Control behaviour
+o Try to make the agent commit to actions for longer periods of time
+    - Idea: Reduce training time by removing the high frequency oscilations at beginning of training
+    - Possibly make "commitment time" a function of entropy? Basically, if the agent is unsure about a particular action
+      make it commit to it for a longer time so that it can observe the results properly.
+      
