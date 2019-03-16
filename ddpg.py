@@ -16,8 +16,7 @@ class DDPG():
 
     def __init__(self, vae_input_shape, input_shape, action_space,
                  initial_actor_lr=3e-4, initial_critic_lr=3e-4, lr_decay=0.998,
-                 discount_factor=0.99, polyak=0.995,
-                 initial_std=0.1,
+                 discount_factor=0.99, polyak=0.995, grad_norm=5e-3,
                  output_dir="./"):
         """
             input_shapes (list):
@@ -73,13 +72,9 @@ class DDPG():
         # Create polyak update ops
         self.update_target_params_op, init_target_params_op  = create_polyak_update_ops("main/", "target/")
 
-        # Define graph for sampling actions
-        self.sample_logstds = tf.Variable(np.full((num_actions), np.log(initial_std), dtype=np.float32), name="sample_logstds", trainable=False)
-        self.sample_normal  = tfp.distributions.Normal(self.actor_mean, tf.exp(self.sample_logstds), validate_args=True)
-        self.sampled_action = tf.clip_by_value(tf.squeeze(self.sample_normal.sample(1), axis=0), action_space.low, action_space.high)
-
         # Critic (MSBE) loss = min_θ mse(Q(s, a), r + gamma * Q(s', μ(s'; θ_{targ}); ϕ_{targ}))
         self.Q_target    = tf.stop_gradient(self.rewards + discount_factor * (1.0 - self.terminals) * self.Q_target_value)
+        self.Q_target = tf.squeeze(tf.layers.batch_normalization(tf.expand_dims(self.Q_target, axis=-1), center=False, training=False, trainable=True), axis=-1)
         self.Q_delta     = self.Q_value - self.Q_target
         self.critic_loss = tf.reduce_mean((self.Q_delta)**2 * self.is_weights)
 
@@ -98,8 +93,8 @@ class DDPG():
         critic_lr = tf.train.exponential_decay(initial_critic_lr, self.episode_counter.var, 1, lr_decay, staircase=True)
         #self.train_actor_op = tf.train.AdamOptimizer(learning_rate=actor_lr, epsilon=1e-5).minimize(self.actor_loss, var_list=actor_params)
         #self.train_critic_op = tf.train.AdamOptimizer(learning_rate=critic_lr, epsilon=1e-5).minimize(self.critic_loss, var_list=critic_params)
-        self.train_actor_op = clip_grad(tf.train.AdamOptimizer(learning_rate=actor_lr, epsilon=1e-5), actor_params, self.actor_loss, 5e-3)
-        self.train_critic_op = clip_grad(tf.train.AdamOptimizer(learning_rate=critic_lr, epsilon=1e-5), critic_params, self.critic_loss, 5e-3)
+        self.train_actor_op = clip_grad(tf.train.AdamOptimizer(learning_rate=actor_lr, epsilon=1e-5), actor_params, self.actor_loss, grad_norm)
+        self.train_critic_op = clip_grad(tf.train.AdamOptimizer(learning_rate=critic_lr, epsilon=1e-5), critic_params, self.critic_loss, grad_norm)
 
         # Create session
         self.sess = tf.Session()
@@ -110,7 +105,6 @@ class DDPG():
         for i in range(num_actions):
             metrics["actor.train/episodic/action_{}/taken_actions".format(i)] = tf.metrics.mean(tf.reduce_mean(self.taken_actions[:, i]))
             metrics["actor.train/episodic/action_{}/mean".format(i)] = tf.metrics.mean(tf.reduce_mean(self.actor_mean[:, i]))
-            metrics["actor.train/episodic/action_{}/std".format(i)] = tf.metrics.mean(tf.reduce_mean(tf.exp(self.sample_logstds[i])))
         metrics["critic.train/episodic/Q_value"] = tf.metrics.mean(self.Q_value)
         metrics["critic.train/episodic/Q_target"] = tf.metrics.mean(self.Q_target)
         metrics["critic.train/episodic/Q_delta"] = tf.metrics.mean(self.Q_delta)
@@ -123,17 +117,15 @@ class DDPG():
 
         # Set up stepwise summaries
         summaries = []
-        summaries.append(tf.summary.scalar("train/critic_rl", critic_lr))
+        summaries.append(tf.summary.scalar("train/critic_lr", critic_lr))
         self.critic_stepwise_summaries_op = tf.summary.merge(summaries)
         summaries = []
-        summaries.append(tf.summary.scalar("train/actor_rl", actor_lr))
+        summaries.append(tf.summary.scalar("train/actor_lr", actor_lr))
         self.actor_stepwise_summaries_op = tf.summary.merge(summaries)
 
         summaries = []
         for i in range(num_actions):
             summaries.append(tf.summary.scalar("actor.predict/action_{}/mean".format(i), self.actor_mean[0, i]))
-            summaries.append(tf.summary.scalar("actor.predict/action_{}/std".format(i), tf.exp(self.sample_logstds[i])))
-            summaries.append(tf.summary.scalar("actor.predict/action_{}/sampled_actions".format(i), self.sampled_action[0, i]))
         self.prediction_summaries = tf.summary.merge(summaries)
 
         # Run variable initializers
@@ -220,14 +212,9 @@ class DDPG():
 
         return deltas
 
-    def encode(self, vae_input):
-        return self.sess.run(self.vae.mean, feed_dict={
-            self.vae.input_states: vae_input
-        })
-
     def predict(self, input_states, greedy=False, write_to_summary=False):
         # Return μ(s; θ) if greedy, else return action sampled from N(μ(s; θ), σ)
-        sample_action = self.actor_mean if greedy else self.sampled_action
+        sample_action = self.actor_mean #if greedy else self.sampled_action
         action, summary, Q_value = self.sess.run([sample_action, self.prediction_summaries, self.Q_value_of_actor],
                                         feed_dict={
                                             self.input_states: input_states
@@ -236,6 +223,11 @@ class DDPG():
             self.train_writer.add_summary(summary, self.get_predict_step_counter())
             self.sess.run(self.predict_step_counter.inc_op)
         return action, Q_value
+
+    def encode(self, vae_input):
+        return self.sess.run(self.vae.mean, feed_dict={
+            self.vae.input_states: vae_input
+        })
 
     def get_episode_counter(self):
         return self.sess.run(self.episode_counter.var)

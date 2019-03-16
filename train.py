@@ -9,15 +9,14 @@ import gym
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-from IPython.display import clear_output, display
 from skimage import transform
+from stable_baselines.ddpg.noise import OrnsteinUhlenbeckActionNoise
 
 from ddpg import DDPG
-from RoadFollowingEnv.car_racing import RoadFollowingEnv
-from utils import (FrameStack, ReplayBuffer, VideoRecorder, do_random_exploration,
-                   preprocess_frame)
 from replay_buffers import PrioritizedReplayBuffer
-from stable_baselines.ddpg.noise import OrnsteinUhlenbeckActionNoise
+from RoadFollowingEnv.car_racing import RoadFollowingEnv
+from utils import VideoRecorder, do_random_exploration, preprocess_frame
+
 
 def reward1(state):
     # -10 for driving off-track
@@ -37,40 +36,53 @@ def make_env(title=None, frame_skip=0):
     env.seed(0)
     return env
 
-def test_agent(test_env, model, n=10, record=False):
-    rwds = []
-    for j in range(n):
-        o, d, ep_ret = model.encode([test_env.reset()])[0], False, 0
+def test_agent(test_env, model, record=False):
+    # Init test env
+    state, terminal, total_reward = model.encode([test_env.reset()])[0], False, 0
+    rendered_frame = test_env.render(mode="rgb_array")
+
+    # Init video recording
+    video_filename = os.path.join(model.video_dir, "episode{}.avi".format(model.get_episode_counter()))
+    video_recorder = VideoRecorder(video_filename, frame_size=rendered_frame.shape)
+    video_recorder.add_frame(rendered_frame)
+
+    # While non-terminal state
+    while not terminal:
+        # Take deterministic actions at test time (noise_scale=0)
+        action = model.predict([state], greedy=True)[0][0]
+        state, reward, terminal, _ = test_env.step(action)
+        state = model.encode([state])[0]
+
+        # Add frame
         rendered_frame = test_env.render(mode="rgb_array")
-        video_recorder = VideoRecorder(os.path.join(model.video_dir, "episode{}.avi".format(model.get_episode_counter())),
-                                       frame_size=rendered_frame.shape) if j == 0 and record_eval else None
-        while not d:
-            # Take deterministic actions at test time (noise_scale=0)
-            action = model.predict([o])[0][0]
-            o, reward, d, _ = test_env.step(action)
-            o = model.encode([o])[0]
-            rendered_frame = test_env.render(mode="rgb_array")
-            if video_recorder: video_recorder.add_frame(rendered_frame)
-            ep_ret += reward
-        if video_recorder: video_recorder.release()
-        rwds.append(ep_ret)
-    return np.mean(rwds)
+        if video_recorder: video_recorder.add_frame(rendered_frame)
+        total_reward += reward
+
+    # Release video
+    if video_recorder:
+        video_recorder.release()
+    
+    return total_reward, test_env.reward
 
 def train(params, model_name, save_interval=10, eval_interval=10, record_eval=True, restart=False):
     # Create env
     print("Creating environment")
-    env      = make_env(model_name, frame_skip=0)#, frame_skip=1)
+    env      = make_env(model_name, frame_skip=1)#0)
     test_env = make_env(model_name + " (Test)")
 
     # Traning parameters
-    actor_lr        = params["actor_lr"]
-    critic_lr       = params["critic_lr"]
-    discount_factor = params["discount_factor"]
-    polyak          = params["polyak"]
-    initial_std     = params["initial_std"]
-    replay_size     = params["replay_size"]
-    start_steps     = params["start_steps"]
-    batch_size      = params["batch_size"]
+    actor_lr                 = params["actor_lr"]
+    critic_lr                = params["critic_lr"]
+    discount_factor          = params["discount_factor"]
+    polyak                   = params["polyak"]
+    initial_std              = params["initial_std"]
+    grad_norm                = params["grad_norm"]
+    replay_size              = params["replay_size"]
+    start_steps              = params["start_steps"]
+    batch_size               = params["batch_size"]
+    num_episodes             = params["num_episodes"]
+    train_steps_per_episode  = params["train_steps_per_episode"]
+    num_exploration_episodes = params["num_exploration_episodes"]
 
     print("")
     print("Training parameters:")
@@ -92,8 +104,9 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
                  initial_actor_lr=actor_lr,
                  initial_critic_lr=critic_lr,
                  discount_factor=discount_factor,
-                 initial_std=initial_std,
+                 polyak=polyak,
                  lr_decay=1.0,
+                 grad_norm=grad_norm,
                  output_dir=os.path.join("models", model_name))
 
     # Prompt to load existing model if any
@@ -116,38 +129,12 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
     model.write_dict_to_summary("hyperparameters", params, 0)
 
     # Create replay buffer
-    #replay_buffer = ReplayBuffer(input_shapes, num_actions, size=replay_size)
     replay_buffer = PrioritizedReplayBuffer(replay_size, alpha=0.6)
+    noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros((2,)), sigma=initial_std)
+    exploration_episode_counter = -num_exploration_episodes
 
-    # Fill replay buffer with data from random exploration
-    """do_random_exploration(env, replay_buffer, start_steps)
-
-    # Train for one epoch over replay data
-    print("Training inital parameters")
-    for i in range(start_steps):
-        # Sample mini-batch randomly
-        states, taken_actions, rewards, states_next, terminals, w, eid = replay_buffer.sample(batch_size, beta=0.4)
-
-        states = np.expand_dims(np.squeeze(states, axis=1), axis=0)
-        states_next = np.expand_dims(np.squeeze(states_next, axis=1), axis=0)
-
-        #assert len(states) == len(input_shapes)
-        #for j in range(len(states)):
-        #    assert states[j].shape == (batch_size, *input_shapes[j])
-        assert taken_actions.shape == (batch_size, num_actions)
-        assert rewards.shape == (batch_size,)
-        assert terminals.shape == (batch_size,)
-
-        # Optimize network
-        deltas = model.train(states, taken_actions, rewards, states_next, terminals, np.squeeze(w))
-
-        replay_buffer.update_priorities(eid, np.abs(deltas) + 1e-6)"""
-    noise = OrnsteinUhlenbeckActionNoise(
-            mean=np.zeros((2,)),
-            sigma=initial_std)
-    ep_counter = 0
     # For every episode
-    while True:
+    while exploration_episode_counter < num_episodes:
         episode_counter = model.get_episode_counter()
         print(f"Episode {episode_counter} (Step {model.get_predict_step_counter()})")
 
@@ -157,19 +144,26 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
         
         # Run evaluation periodically
         if episode_counter % eval_interval == 0:
-            eval_reward = test_agent(test_env, model, n=1, record=record_eval)
-            model.write_value_to_summary("eval/episode_reward", eval_reward, episode_counter)
+            eval_reward, eval_score = test_agent(test_env, model, record=record_eval)
+            model.write_value_to_summary("eval/episodic/score", eval_score, episode_counter)
+            model.write_value_to_summary("eval/episodic/reward", eval_reward, episode_counter)
 
         # Reset environment
-        state, terminal_state, total_reward, total_q, episode_len = model.encode([env.reset()])[0], False, 0, 0, 0
+        state, terminal_state, total_reward, total_q = model.encode([env.reset()])[0], False, 0, 0
         noise.reset()
 
         # While episode not done
         while not terminal_state:
-            # Sample action given state
-            action, q_value = model.predict([state], greedy=True, write_to_summary=True)
-            action, q_value = action[0], q_value[0]
-            action = np.clip(action+noise(), env.action_space.low, env.action_space.high)
+            if exploration_episode_counter < 0:
+                #action, q_value = env.action_space.sample(), 0
+                action = np.array([0.0+np.random.rand()*0.1, 0.7+np.random.rand()*0.3])
+
+                q_value = 0
+            else:
+                # Sample action given state
+                action, q_value = model.predict([state], greedy=True, write_to_summary=True)
+                action, q_value = action[0], q_value[0]
+            action = np.clip(action + noise(), env.action_space.low, env.action_space.high)
             total_q += q_value
 
             # Perform action
@@ -177,18 +171,18 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
             new_state = model.encode([new_state])[0]
             env.render()
             total_reward += reward
-            episode_len  += 1
 
             # Store tranisition
             replay_buffer.add(state, action, reward, new_state, terminal_state)
             state = new_state
 
         # Train for one epoch over replay data
-        print("Training parameters")
-        if ep_counter > 10:
-            for i in range(500):
-                if i % 1000 == 0:
-                    print("Iteration {}/{}".format(i, 3000))
+        print("Training...")
+        if exploration_episode_counter >= 0:
+            n = 10000 if exploration_episode_counter-1 == 0 else train_steps_per_episode
+            for i in range(n):
+                if i % (train_steps_per_episode // 10) == 0:
+                    print("{}%".format(i / train_steps_per_episode * 100))
 
                 # Sample mini-batch randomly
                 states, taken_actions, rewards, states_next, terminals, w, eid = replay_buffer.sample(batch_size, beta=0.4)
@@ -204,11 +198,12 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
 
                 replay_buffer.update_priorities(eid, np.abs(deltas) + 1e-6)
 
-        ep_counter += 1
-        # Write episodic values
-        model.write_value_to_summary("train/episode_reward", total_reward, episode_counter)
-        model.write_value_to_summary("train/episodic/q_value", total_q, episode_counter)
-        model.write_episodic_summaries()
+            # Write episodic values
+            model.write_value_to_summary("train/episodic/score", env.reward, episode_counter)
+            model.write_value_to_summary("train/episodic/reward", total_reward, episode_counter)
+            model.write_value_to_summary("train/episodic/q_value", total_q, episode_counter)
+            model.write_episodic_summaries()
+        exploration_episode_counter += 1
 
 if __name__ == "__main__":
     import argparse
@@ -221,9 +216,13 @@ if __name__ == "__main__":
     parser.add_argument("--discount_factor", type=float, default=0.9)
     parser.add_argument("--polyak", type=float, default=0.999)
     parser.add_argument("--initial_std", type=float, default=0.4)
+    parser.add_argument("--grad_norm", type=float, default=5e-3)
     parser.add_argument("--replay_size", type=int, default=int(1e4))
     parser.add_argument("--start_steps", type=int, default=int(1e4))
     parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--num_episodes", type=int, default=200)
+    parser.add_argument("--num_exploration_episodes", type=int, default=10)
+    parser.add_argument("--train_steps_per_episode", type=int, default=500)
 
     # Training vars
     parser.add_argument("--model_name", type=str, required=True)
@@ -248,10 +247,11 @@ if __name__ == "__main__":
     if isinstance(seed, int):
         tf.random.set_random_seed(seed)
         np.random.seed(seed)
+        random.seed(0)
 
     # Call main func
     train(params, model_name,
-            save_interval=save_interval,
-            eval_interval=eval_interval,
-            record_eval=record_eval,
-            restart=restart)
+          save_interval=save_interval,
+          eval_interval=eval_interval,
+          record_eval=record_eval,
+          restart=restart)
