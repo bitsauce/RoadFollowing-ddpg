@@ -326,16 +326,17 @@ class RoadFollowingEnv(gym.Env, EzPickle):
         self.state.velocity = velocity
 
         if action is not None:
+            gas = action[1]
             if self.max_speed is not None and velocity > self.max_speed:
-                action[1] = 0.0
+                gas = 0.0
             self.car.steer(-action[0] * self.steer_scale)
-            if action[1] >= 0:
-                self.car.gas(action[1] * self.throttle_scale)
+            if gas >= 0:
+                self.car.gas(gas * self.throttle_scale)
                 self.car.brake(0)
-            elif action[1] < 0:
+            elif gas < 0:
                 self.car.gas(0)
-                self.car.brake(-action[1] * self.throttle_scale)
-            self.state.throttle, self.state.gas = action
+                self.car.brake(-gas * self.throttle_scale)
+            self.state.steering, self.state.throttle = action
             self.t += dt
 
         self.car.step(dt)
@@ -509,7 +510,7 @@ class RoadFollowingEnv(gym.Env, EzPickle):
 if __name__=="__main__":
     from pyglet.window import key
     #env = RoadFollowingEnv(throttle_scale=0.1, steer_scale=0.25)
-    env = RoadFollowingEnv(throttle_scale=1.0, steer_scale=0.25, max_speed=30)
+    env = RoadFollowingEnv(throttle_scale=0.1, steer_scale=0.25, max_speed=30)
     a = np.zeros(env.action_space.shape[0])
     def key_press(k, mod):
         global restart
