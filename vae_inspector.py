@@ -24,25 +24,35 @@ if not vae.load_latest_checkpoint():
     print("Failed to load latest checkpoint for model \"{}\"".format(args.model_name))
 
 if args.reconstruct:
-    from gym.envs.box2d.car_racing import CarRacing
+    from RoadFollowingEnv.car_racing import RoadFollowingEnv
     from train import preprocess_frame
     from pyglet.window import key
 
-    action = np.array([0.0, 0.0, 0.0])
+    def make_env(title=None, frame_skip=0):
+        env = RoadFollowingEnv(title=title,
+                            #reward_fn=reward1,
+                            encode_state_fn=lambda x: preprocess_frame(x.frame),
+                            throttle_scale=0.1,
+                            #steer_scale=0.25,
+                            max_speed=30.0,
+                            frame_skip=frame_skip)
+        return env
+
+    env = make_env()
+    action = np.zeros(env.action_space.shape[0])
     restart = False
     def key_press(k, mod):
         global restart
-        if k == 0xff0d: restart = True
-        if k == key.LEFT:  action[0] = -1.0
-        if k == key.RIGHT: action[0] = +1.0
-        if k == key.UP:    action[1] = +1.0
-        if k == key.DOWN:  action[2] = +0.8   # set 1.0 for wheels to block to zero rotation
+        if k==0xff0d: restart = True
+        if k==key.LEFT:  action[0] = -1.0
+        if k==key.RIGHT: action[0] = +1.0
+        if k==key.UP:    action[1] = +1.0
+        if k==key.DOWN:  action[1] = -1.0
     def key_release(k, mod):
-        if k == key.LEFT  and action[0] == -1.0: action[0] = 0
-        if k == key.RIGHT and action[0] == +1.0: action[0] = 0
-        if k == key.UP:    action[1] = 0
-        if k == key.DOWN:  action[2] = 0
-    env = CarRacing()
+        if k==key.LEFT  and action[0]==-1.0: action[0] = 0
+        if k==key.RIGHT and action[0]==+1.0: action[0] = 0
+        if k==key.UP:    action[1] = 0
+        if k==key.DOWN:  action[1] = 0
     env.render()
     env.viewer.window.on_key_press = key_press
     env.viewer.window.on_key_release = key_release
@@ -52,13 +62,10 @@ if args.reconstruct:
         global done, restart, action, env, im1, im2
         if done or restart:
             env.reset()
-
         s, r, done, info = env.step(action)
-
         env.render(mode="human")
-        input_state = preprocess_frame(env.state)
-        reconstruted_state = vae.reconstruct([input_state])
-        im1.set_array(input_state[:, :, 0])
+        reconstruted_state = vae.reconstruct([s])
+        im1.set_array(s[:, :, 0])
         im2.set_array(reconstruted_state[0].reshape(84, 84))
         return im1, im2
 

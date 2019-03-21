@@ -58,7 +58,7 @@ ZOOM_FOLLOW = True       # Set to False for fixed view (don't use zoom)
 
 
 TRACK_DETAIL_STEP = 21/SCALE
-TRACK_TURN_RATE = 0.31
+TRACK_TURN_RATE = 0.1#0.31
 TRACK_WIDTH = 40/SCALE
 BORDER = 8/SCALE
 BORDER_MIN_COUNT = 4
@@ -108,9 +108,9 @@ class FrictionDetector(contactListener):
 
 class State():
     def __init__(self):
-        self.frame = None
+        self.encoded_state = None
         self.throttle = 0.0
-        self.gas = 0.0
+        self.steering = 0.0
         self.velocity = 0.0
         self.distance_traveled = 0.0
         self.num_contacts = 0
@@ -122,7 +122,7 @@ class RoadFollowingEnv(gym.Env, EzPickle):
         'video.frames_per_second' : FPS
     }
 
-    def __init__(self, title=None, throttle_scale=1.0, steer_scale=1.0, max_speed=None, reward_fn=None, preprocess_frame_fn=None, frame_skip=0):
+    def __init__(self, title=None, throttle_scale=1.0, steer_scale=1.0, max_speed=None, reward_fn=None, encode_state_fn=None, frame_skip=0):
         EzPickle.__init__(self)
         self.seed()
         self.contactListener = FrictionDetector(self)
@@ -138,15 +138,14 @@ class RoadFollowingEnv(gym.Env, EzPickle):
         self.reward = 0.0
         self.state = State()
         self.title = title
-        self.preprocess_frame_fn = (lambda x: x) if preprocess_frame_fn is None else preprocess_frame_fn
+        self.encode_state_fn = (lambda x: x) if encode_state_fn is None else encode_state_fn
         self.reward_fn = reward_fn
         self.frame_skip = frame_skip
 
-        obs = self.reset()[0]
+        #obs = self.reset()
 
-        self.action_space = spaces.Box(np.array([-1, -1]), np.array([1, 1]), dtype=np.float32)  # steer, gas, brake
-        #self.observation_space = spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8)
-        self.observation_space = spaces.Box(low=0, high=255, shape=obs.shape, dtype=np.uint8)
+        self.action_space = spaces.Box(np.array([-1, 0]), np.array([1, 1]), dtype=np.float32)  # steer, gas, brake
+        #self.observation_space = spaces.Box(low=0.0, high=1.0, shape=obs.shape, dtype=np.uint8)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -342,7 +341,8 @@ class RoadFollowingEnv(gym.Env, EzPickle):
         self.car.step(dt)
         self.world.Step(dt, 6*30, 2*30)
 
-        self.state.frame = self.preprocess_frame_fn(self.render("state_pixels"))
+        self.state.frame = self.render("state_pixels")
+        self.state.encoded_state = self.encode_state_fn(self.state)
 
         done = False
         if action is not None:
@@ -355,7 +355,7 @@ class RoadFollowingEnv(gym.Env, EzPickle):
         if self.state.num_contacts == 0 or (velocity < 0.1 and self.t > 1.0):
             done = True
 
-        return self.state.frame, self.reward if self.reward_fn is None else self.reward_fn(self.state), done, {}
+        return self.state.encoded_state, self.reward if self.reward_fn is None else self.reward_fn(self.state), done, {}
 
     def step(self, action):
         for _ in range(self.frame_skip + 1):
