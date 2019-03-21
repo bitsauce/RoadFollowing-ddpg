@@ -5,6 +5,12 @@ import types
 import cv2
 import scipy.signal
 
+def preprocess_frame(frame):
+    frame = frame[:-12, 6:-6] # Crop to 84x84
+    frame = np.dot(frame[..., 0:3], [0.299, 0.587, 0.114])
+    frame = frame / 255.0
+    return np.expand_dims(frame, axis=-1)
+
 class FrameStack():
     def __init__(self, initial_frame, stack_size=4, preprocess_fn=None):
         # Setup initial state
@@ -68,15 +74,10 @@ def create_mean_metrics_from_dict(metrics):
         update_metrics_ops.append(update_op)
     return tf.summary.merge(summaries), tf.group(update_metrics_ops)
 
-def do_random_exploration(env, replay_buffer, n_steps):
-    # Simulate environment for n_steps
-    state = env.reset()
-    for _ in range(n_steps):
-        action = env.action_space.sample()
-        action[1] = min(1.0 - np.random.rand(), 1.0)
-        new_state, reward, terminal_state, _ = env.step(action)
-        replay_buffer.add([state], action, reward, [new_state], terminal_state)
-        state = env.reset() if terminal_state else new_state
+def clip_grad(optimizer, params, loss, grad_clip):
+    gvs = optimizer.compute_gradients(loss, var_list=params)
+    capped_gvs = [(tf.clip_by_value(grad, -grad_clip, grad_clip), var) for grad, var in gvs]
+    return optimizer.apply_gradients(capped_gvs)
 
 def discount(x, gamma):
     return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
@@ -113,10 +114,4 @@ def compute_gae_old(rewards, values, bootstrap_value, terminals, gamma, lam):
         delta = rewards[i] + gamma * values[i + 1] * (1.0 - terminals[i]) - values[i]
         advantages[i] = last_gae_lam = delta + gamma * lam * (1.0 - terminals[i]) * last_gae_lam
     return advantages
-
-def preprocess_frame(frame):
-    frame = frame[:-12, 6:-6] # Crop to 84x84
-    frame = np.dot(frame[..., 0:3], [0.299, 0.587, 0.114])
-    frame = frame / 255.0
-    return np.expand_dims(frame, axis=-1)
     

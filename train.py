@@ -13,6 +13,7 @@ from skimage import transform
 from stable_baselines.ddpg.noise import OrnsteinUhlenbeckActionNoise
 
 from ddpg import DDPG
+from vae.models import ConvVAE, MlpVAE
 from replay_buffers import PrioritizedReplayBuffer
 from RoadFollowingEnv.car_racing import RoadFollowingEnv
 from utils import VideoRecorder, preprocess_frame
@@ -43,8 +44,9 @@ def create_encode_state_fn(model, with_measurements=False, stack=None):
         return np.array(encoded_state)
     return encode_state
 
-def make_env(title=None, frame_skip=0):
+def make_env(title=None, frame_skip=0, encode_state_fn=None):
     env = RoadFollowingEnv(title=title,
+                           encode_state_fn=encode_state_fn,
                            reward_fn=reward1,
                            throttle_scale=0.1,
                            #steer_scale=0.25,
@@ -81,10 +83,22 @@ def test_agent(test_env, model, record=False):
     return total_reward, test_env.reward
 
 def train(params, model_name, save_interval=10, eval_interval=10, record_eval=True, restart=False):
+    # Load pre-trained variational autoencoder
+    vae = ConvVAE(input_shape=(84, 84, 1),
+                  z_dim=10, models_dir="vae",
+                  model_name="bce_cnn_zdim10_beta4_data10k",
+                  training=False)
+    vae.init_session(init_logging=False)
+
+    # State encoding fn
+    with_measurements = False#True
+    stack = None
+    encode_state_fn = create_encode_state_fn(vae, with_measurements=with_measurements, stack=stack)
+
     # Create env
     print("Creating environment")
-    env      = make_env(model_name, frame_skip=0)
-    test_env = make_env(model_name + " (Test)")
+    env      = make_env(model_name, frame_skip=0, encode_state_fn=encode_state_fn)
+    test_env = make_env(model_name + " (Test)", encode_state_fn=encode_state_fn)
 
     # Traning parameters
     actor_lr                 = params["actor_lr"]
@@ -107,11 +121,8 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
     for k, v, in params.items(): print(f"  {k}: {v}")
     print("")
 
-    with_measurements = False#True
-    stack = None
 
     # Environment constants
-    vae_input_shape  = (84, 84, 1)
     input_shape      = np.array([10])
     if with_measurements: input_shape[0] += 3
     if stack is not None: input_shape[0] *= stack
@@ -121,10 +132,10 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
     action_noise     = OrnsteinUhlenbeckActionNoise(mean=np.array([0.0, 0.5]), sigma=initial_std)#, dt=0.2)
     #action_noise = NormalActionNoise(mean=np.zeros((2,)), sigma=initial_std)
 
+
     # Create model
     print("Creating model")
-    model = DDPG(vae_input_shape,
-                 input_shape,
+    model = DDPG(input_shape,
                  env.action_space,
                  action_noise,
                  initial_actor_lr=actor_lr,
@@ -134,11 +145,6 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
                  lr_decay=1.0,
                  grad_norm=grad_norm,
                  output_dir=os.path.join("models", model_name))
-
-    # Set state encoding fn
-    encode_state_fn = create_encode_state_fn(model, with_measurements=with_measurements, stack=stack)
-    env.encode_state_fn = encode_state_fn
-    test_env.encode_state_fn = encode_state_fn
 
     # Prompt to load existing model if any
     if not restart:

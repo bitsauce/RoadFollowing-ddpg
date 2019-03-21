@@ -7,7 +7,6 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 from utils import build_mlp, create_polyak_update_ops, create_counter_variable, create_mean_metrics_from_dict, clip_grad
-from vae import VAE
 
 
 class DDPG():
@@ -15,7 +14,7 @@ class DDPG():
         Deep deterministic policy gradient implementation
     """
 
-    def __init__(self, vae_input_shape, input_shape, action_space, action_noise,
+    def __init__(self, input_shape, action_space, action_noise,
                  initial_actor_lr=3e-4, initial_critic_lr=3e-4, lr_decay=0.998,
                  discount_factor=0.99, polyak=0.995, grad_norm=5e-3,
                  output_dir="./"):
@@ -52,14 +51,6 @@ class DDPG():
         self.terminals         = tf.placeholder(shape=(None,), dtype=tf.float32, name="terminals_placeholder")                     # d
         self.is_weights        = tf.placeholder(shape=(None,), dtype=tf.float32, name="is_weights_placeholder")                    # w
 
-        # Load pre-trained variational autoencoder
-        z_dim = 10
-        self.vae = VAE(input_shape=vae_input_shape,
-                       z_dim=z_dim, model_type="mlp",
-                       model_name="bce_mlp_zdim10_beta4_data10k_v2",
-                       model_dir="train_vae/", training=False)
-        self.vae_mean_squashed = tf.nn.sigmoid(self.vae.mean)
-
         states = self.input_states
         states_next = self.input_states_next
         hidden_sizes=(500,300)
@@ -85,7 +76,7 @@ class DDPG():
         self.update_target_params_op, init_target_params_op  = create_polyak_update_ops("main/", "target/", polyak=polyak)
 
         # Critic (MSBE) loss = min_θ mse(Q(s, a), r + gamma * Q(s', μ(s'; θ_{targ}); ϕ_{targ}))
-        self.total_reward = self.rewards + intrinsic_reward
+        self.total_reward = self.rewards# + intrinsic_reward
         self.Q_target     = tf.stop_gradient(self.total_reward + discount_factor * (1.0 - self.terminals) * self.Q_target_value)
         self.Q_delta      = self.Q_value - self.Q_target
         self.critic_loss  = tf.reduce_mean((self.Q_delta)**2 * self.is_weights)
@@ -241,7 +232,7 @@ class DDPG():
         return action, Q_value
 
     def encode(self, vae_input):
-        return self.sess.run(self.vae_mean_squashed, feed_dict={
+        return self.sess.run(self.vae.mean, feed_dict={
             self.vae.input_states: vae_input
         })
 
