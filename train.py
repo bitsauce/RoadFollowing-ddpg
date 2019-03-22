@@ -20,10 +20,10 @@ from utils import VideoRecorder, preprocess_frame
 
 def reward1(state):
     # -10 for driving off-track
-    if state.num_contacts == 0: return -10
+    if state.num_contacts == 0: return -10 * 0.1
     # + 1 x throttle
-    reward = state.velocity
-    reward -= 0.01
+    reward = state.velocity * 0.001
+    #reward -= 0.01
     return reward
 
 def create_encode_state_fn(model, with_measurements=False, stack=None):
@@ -84,11 +84,14 @@ def test_agent(test_env, model, record=False):
 
 def train(params, model_name, save_interval=10, eval_interval=10, record_eval=True, restart=False):
     # Load pre-trained variational autoencoder
+    z_dim = 64
     vae = ConvVAE(input_shape=(84, 84, 1),
-                  z_dim=10, models_dir="vae",
-                  model_name="bce_cnn_zdim10_beta4_data10k",
+                  z_dim=z_dim, models_dir="vae",
+                  model_name="mse_cnn_zdim64_beta1_data10k",
                   training=False)
     vae.init_session(init_logging=False)
+    if not vae.load_latest_checkpoint():
+        raise Exception("Failed to load VAE")
 
     # State encoding fn
     with_measurements = False#True
@@ -110,7 +113,6 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
     replay_size              = params["replay_size"]
     replay_alpha             = params["replay_alpha"]
     replay_beta              = params["replay_beta"]
-    start_steps              = params["start_steps"]
     batch_size               = params["batch_size"]
     num_episodes             = params["num_episodes"]
     train_steps_per_episode  = params["train_steps_per_episode"]
@@ -123,15 +125,13 @@ def train(params, model_name, save_interval=10, eval_interval=10, record_eval=Tr
 
 
     # Environment constants
-    input_shape      = np.array([10])
+    input_shape      = np.array([z_dim])
     if with_measurements: input_shape[0] += 3
     if stack is not None: input_shape[0] *= stack
     num_actions      = env.action_space.shape[0]
     action_min       = env.action_space.low
     action_max       = env.action_space.high
-    action_noise     = OrnsteinUhlenbeckActionNoise(mean=np.array([0.0, 0.5]), sigma=initial_std)#, dt=0.2)
-    #action_noise = NormalActionNoise(mean=np.zeros((2,)), sigma=initial_std)
-
+    action_noise     = OrnsteinUhlenbeckActionNoise(mean=np.array([0.0, 0.5]), sigma=initial_std)
 
     # Create model
     print("Creating model")
@@ -252,7 +252,6 @@ if __name__ == "__main__":
     parser.add_argument("--replay_size", type=int, default=int(1e4))
     parser.add_argument("--replay_alpha", type=float, default=0.6)
     parser.add_argument("--replay_beta", type=float, default=0.4)
-    parser.add_argument("--start_steps", type=int, default=int(1e4))
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_episodes", type=int, default=200)
     parser.add_argument("--num_exploration_episodes", type=int, default=10)

@@ -8,31 +8,31 @@ def kl_divergence(mean, logstd_sq, name="kl_divergence"):
     with tf.variable_scope(name):
         return -0.5 * tf.reduce_sum(1.0 + logstd_sq - tf.square(mean) - tf.exp(logstd_sq), axis=1)
 
-def bce_loss(labels, logits):
+def bce_loss(labels, logits, targets):
     return tf.nn.sigmoid_cross_entropy_with_logits(
         labels=labels,
         logits=logits
     )
 
-def bce_loss_v2(labels, logits, epsilon=1e-10):
+def bce_loss_v2(labels, logits, targets, epsilon=1e-10):
     with tf.variable_scope("bce"):
-        return -(labels * tf.log(epsilon + logits) + (1 - labels) * tf.log(epsilon + 1 - logits))
+        return -(labels * tf.log(epsilon + targets) + (1 - labels) * tf.log(epsilon + 1 - targets))
 
-def mse_loss(labels, logits):
-    return tf.math.squared_difference(labels, logits)
+def mse_loss(labels, logits, targets):
+    return (labels - targets)**2
 
 
 class VAE():
-    def __init__(self, input_shape,
-                 build_encoder_fn, build_decoder_fn,
-                 z_dim=512, beta=1.0, learning_rate=3e-4,
-                 model_name="vae", models_dir=".",
-                 loss_fn=bce_loss, training=True,
-                 reuse=tf.AUTO_REUSE,
+    def __init__(self, input_shape, build_encoder_fn, build_decoder_fn,
+                 z_dim=512, beta=1.0, learning_rate=1e-4, kl_tolerance=0.5,
+                 model_name="vae", models_dir=".", loss_fn=bce_loss,
+                 training=True, reuse=tf.AUTO_REUSE,
                  **kwargs):
         # Create vae
         self.input_shape = input_shape
         self.z_dim = z_dim
+        self.beta = beta
+        self.kl_tolerance = kl_tolerance
         with tf.variable_scope("vae", reuse=reuse):
             # Get and verify input
             self.input_states = tf.placeholder(shape=(None, *input_shape), dtype=tf.float32, name="input_state_placeholder")
@@ -65,19 +65,26 @@ class VAE():
                 decoded = build_decoder_fn(self.sample)
 
             # Reconstruct image
-            self.reconstructed_logits = tf.layers.flatten(decoded,  name="reconstructed_logits")
+            self.reconstructed_logits = tf.layers.flatten(decoded, name="reconstructed_logits")
             self.reconstructed_states = tf.nn.sigmoid(self.reconstructed_logits, name="reconstructed_states")
 
             # Reconstruction loss
             self.flattened_input = tf.layers.flatten(self.input_states, name="flattened_input")
             self.reconstruction_loss = tf.reduce_mean(
                 tf.reduce_sum(
-                    loss_fn(labels=self.flattened_input, logits=self.reconstructed_logits),
+                    loss_fn(labels=self.flattened_input, logits=self.reconstructed_logits, targets=self.reconstructed_states),
                     axis=1
                 )
             )
-            self.kl_loss = tf.reduce_mean(kl_divergence(self.mean, self.logstd_sq, name="kl_divergence"))
-            self.loss = self.reconstruction_loss + beta * self.kl_loss
+
+            # KL divergence loss
+            self.kl_loss = kl_divergence(self.mean, self.logstd_sq, name="kl_divergence")
+            if self.kl_tolerance > 0:
+                self.kl_loss = tf.maximum(self.kl_loss, self.kl_tolerance * self.z_dim)
+            self.kl_loss = tf.reduce_mean(self.kl_loss)
+
+            # Total loss
+            self.loss = self.reconstruction_loss + self.beta * self.kl_loss
 
             # Set model dirs
             self.model_name = model_name

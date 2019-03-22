@@ -146,6 +146,6 @@ else:
         generated_image = vae.generate_from_latent([z])[0] * 255
         ui.update_image(generated_image.reshape(input_shape)[:, :, 0])
 
-    ui = UI(vae.sample.shape[1], generate)
+    ui = UI(vae.sample.shape[1], generate, slider_range=10)
     ui.mainloop()
     

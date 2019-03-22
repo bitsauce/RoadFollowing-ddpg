@@ -16,10 +16,10 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="data/data10k.pklz")
     parser.add_argument("--loss_type", type=str, default="bce")
     parser.add_argument("--model_type", type=str, default="mlp")
-    parser.add_argument("--beta", type=int, default=4)
-    parser.add_argument("--z_dim", type=int, default=10)
-    parser.add_argument("--learning_rate", type=float, default=3e-4)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--beta", type=int, default=1)
+    parser.add_argument("--z_dim", type=int, default=64)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--batch_size", type=int, default=100)
     args = parser.parse_args()
 
     with gzip.open(args.dataset, "rb") as f:
@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     if args.loss_type == "bce": loss_fn = bce_loss
     elif args.loss_type == "bce_v2": loss_fn = bce_loss_v2
-    elif args.loss_type == "mse": loss_fn = mse_loss_v2
+    elif args.loss_type == "mse": loss_fn = mse_loss
     else: raise Exception("No loss function \"{}\"".format(args.loss_type))
 
     if args.model_type == "cnn": VAEClass = ConvVAE
@@ -67,8 +67,12 @@ if __name__ == "__main__":
     print("Training")
     while True:
         epoch = vae.get_step_idx()
-        if (epoch + 1) % 10 == 0: print(f"Epoch {epoch + 1}")
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch + 1}")
         
+        # Save model
+        vae.save()
+
         # Calculate evaluation metrics
         val_loss, _ = vae.evaluate(val_images, args.batch_size)
         
@@ -83,7 +87,5 @@ if __name__ == "__main__":
             counter += 1
             if counter >= 10:
                 print("No improvement in last 10 epochs, stopping")
-                vae.save()
                 break
-    vae.train_writer.flush()
-    vae.val_writer.flush()
+

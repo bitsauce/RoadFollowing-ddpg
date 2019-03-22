@@ -325,16 +325,19 @@ class RoadFollowingEnv(gym.Env, EzPickle):
         self.state.velocity = velocity
 
         if action is not None:
-            gas = action[1]
             if self.max_speed is not None and velocity > self.max_speed:
-                gas = 0.0
-            self.car.steer(-action[0] * self.steer_scale)
-            if gas >= 0:
-                self.car.gas(gas * self.throttle_scale)
-                self.car.brake(0)
-            elif gas < 0:
+                #gas = 0.0
                 self.car.gas(0)
-                self.car.brake(-gas * self.throttle_scale)
+            else:
+                self.car.gas((action[1] + 1) * 0.5 * self.throttle_scale)
+            self.car.steer(-action[0] * self.steer_scale)
+            self.car.brake(0)
+            #if gas >= 0:
+            #    self.car.gas(gas * self.throttle_scale)
+            #    self.car.brake(0)
+            #elif gas < 0:
+            #    self.car.gas(0)
+            #    self.car.brake(-gas * self.throttle_scale)
             self.state.steering, self.state.throttle = action
             self.t += dt
 
